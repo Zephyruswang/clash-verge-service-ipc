@@ -520,7 +520,7 @@ mod tests {
     }
 
     #[test]
-    fn a_remote_cache_whose_url_changed_must_be_deleted_before_reload() {
+    fn a_remote_cache_whose_url_changed_is_kept_until_the_core_replaces_it() {
         let previous = manifest(&[], &[("rules/ads.yaml", "https://one.example/ads.yaml")]);
 
         let plan = plan_stage(
@@ -529,15 +529,25 @@ mod tests {
             &[remote("rules/ads.yaml", "https://two.example/ads.yaml")],
         );
 
-        assert_eq!(plan.required_deletes, ["rules/ads.yaml"]);
+        assert!(
+            plan.required_deletes.is_empty(),
+            "a failed refresh must keep the cached provider"
+        );
         assert!(
             plan.hygiene_deletes.is_empty(),
             "declared destinations must not be swept"
         );
+        assert_eq!(
+            plan.manifest
+                .remote_providers
+                .get("rules/ads.yaml")
+                .map(|url| url.as_str()),
+            Some("https://two.example/ads.yaml")
+        );
     }
 
     #[test]
-    fn without_a_manifest_nothing_is_skipped_and_every_cache_is_discarded() {
+    fn without_a_manifest_assets_are_copied_and_remote_caches_are_kept() {
         let sources = [asset_source("/app/geoip.metadb", "geoip.metadb", 60_000_000, 42)];
 
         let plan = plan_stage(
@@ -547,12 +557,15 @@ mod tests {
         );
 
         assert_eq!(plan.copies.len(), 1);
-        assert_eq!(plan.required_deletes, ["rules/ads.yaml"]);
+        assert!(
+            plan.required_deletes.is_empty(),
+            "missing provenance must not discard a cached provider"
+        );
         assert!(plan.skipped.is_empty());
     }
 
     #[test]
-    fn only_paths_a_previous_staging_recorded_are_swept() {
+    fn only_previous_assets_are_swept_and_provider_caches_are_kept() {
         let previous = manifest(
             &[("providers/gone.yaml", identity("/app/gone.yaml", 10, 1))],
             &[("rules/gone.yaml", "https://one.example/gone.yaml")],
@@ -560,7 +573,7 @@ mod tests {
 
         let plan = plan_stage(&previous, &[], &[]);
 
-        assert_eq!(plan.hygiene_deletes, ["providers/gone.yaml", "rules/gone.yaml"]);
+        assert_eq!(plan.hygiene_deletes, ["providers/gone.yaml"]);
         assert!(
             plan.required_deletes.is_empty() && plan.copies.is_empty(),
             "housekeeping alone must not make staging look like it has work to do"
