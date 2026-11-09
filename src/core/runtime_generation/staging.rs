@@ -1,6 +1,7 @@
 //! Updates the runtime generation while its core is still running.
-//! Only manifest-owned files are deleted, provider caches are invalidated when their URL changes,
-//! and asset metadata avoids hashing large unchanged files. Configuration is committed last.
+//! Manifest-owned assets are refreshed or swept, provider caches are kept so a failed refresh can
+//! fall back to the last successful download, and asset metadata avoids hashing large unchanged
+//! files. Configuration is committed last.
 
 use super::assets::{
     destination_key, invalid_asset, resolve_in_generation, runtime_cleanup_retry_delay, validate_core_path,
@@ -62,7 +63,8 @@ pub(super) struct PlannedCopy {
 /// Planned changes, grouped by their required execution order.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(super) struct StagePlan {
-    /// Stale provider caches removed before reload.
+    /// Files to discard before reload. Provider caches are deliberately never listed here: the
+    /// core replaces them only after a successful download, so a failed refresh keeps the old nodes.
     pub required_deletes: Vec<String>,
     pub copies: Vec<PlannedCopy>,
     /// Unchanged assets, retained for logging.
@@ -112,16 +114,14 @@ pub(super) fn plan_stage(previous: &RuntimeManifest, sources: &[AssetSource], re
     }
 
     for provider in remote {
-        // Missing provenance is treated like a changed URL and cannot reuse the cache.
-        if previous.remote_providers.get(&provider.destination) != Some(&provider.url) {
-            plan.required_deletes.push(provider.destination.clone());
-        }
+        // Keep the previous cache: the core only overwrites it after a successful download, so a
+        // failed refresh still has the last successfully downloaded nodes to fall back to.
         plan.manifest
             .remote_providers
             .insert(provider.destination.clone(), provider.url.clone());
     }
 
-    for recorded in previous.assets.keys().chain(previous.remote_providers.keys()) {
+    for recorded in previous.assets.keys() {
         if !plan.manifest.assets.contains_key(recorded) && !plan.manifest.remote_providers.contains_key(recorded) {
             plan.hygiene_deletes.push(recorded.clone());
         }
@@ -520,7 +520,7 @@ mod tests {
     }
 
     #[test]
-    fn a_remote_cache_whose_url_changed_must_be_deleted_before_reload() {
+    fn a_remote_cache_whose_url_changed_is_kept_until_the_core_replaces_it() {
         let previous = manifest(&[], &[("rules/ads.yaml", "https://one.example/ads.yaml")]);
 
         let plan = plan_stage(
@@ -529,15 +529,25 @@ mod tests {
             &[remote("rules/ads.yaml", "https://two.example/ads.yaml")],
         );
 
-        assert_eq!(plan.required_deletes, ["rules/ads.yaml"]);
+        assert!(
+            plan.required_deletes.is_empty(),
+            "a failed refresh must keep the cached provider"
+        );
         assert!(
             plan.hygiene_deletes.is_empty(),
             "declared destinations must not be swept"
         );
+        assert_eq!(
+            plan.manifest
+                .remote_providers
+                .get("rules/ads.yaml")
+                .map(|url| url.as_str()),
+            Some("https://two.example/ads.yaml")
+        );
     }
 
     #[test]
-    fn without_a_manifest_nothing_is_skipped_and_every_cache_is_discarded() {
+    fn without_a_manifest_assets_are_copied_and_remote_caches_are_kept() {
         let sources = [asset_source("/app/geoip.metadb", "geoip.metadb", 60_000_000, 42)];
 
         let plan = plan_stage(
@@ -547,12 +557,15 @@ mod tests {
         );
 
         assert_eq!(plan.copies.len(), 1);
-        assert_eq!(plan.required_deletes, ["rules/ads.yaml"]);
+        assert!(
+            plan.required_deletes.is_empty(),
+            "missing provenance must not discard a cached provider"
+        );
         assert!(plan.skipped.is_empty());
     }
 
     #[test]
-    fn only_paths_a_previous_staging_recorded_are_swept() {
+    fn only_previous_assets_are_swept_and_provider_caches_are_kept() {
         let previous = manifest(
             &[("providers/gone.yaml", identity("/app/gone.yaml", 10, 1))],
             &[("rules/gone.yaml", "https://one.example/gone.yaml")],
@@ -560,7 +573,7 @@ mod tests {
 
         let plan = plan_stage(&previous, &[], &[]);
 
-        assert_eq!(plan.hygiene_deletes, ["providers/gone.yaml", "rules/gone.yaml"]);
+        assert_eq!(plan.hygiene_deletes, ["providers/gone.yaml"]);
         assert!(
             plan.required_deletes.is_empty() && plan.copies.is_empty(),
             "housekeeping alone must not make staging look like it has work to do"
