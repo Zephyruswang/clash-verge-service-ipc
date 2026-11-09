@@ -1,0 +1,37 @@
+name: Sync Upstream
+
+on:
+  schedule:
+    - cron: "0 22 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    name: Sync upstream into mainline
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout mainline
+        uses: actions/checkout@v7
+        with:
+          ref: main-mine
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/clash-verge-rev/clash-verge-service-ipc.git
+
+      - name: Fetch upstream
+        run: git fetch upstream main
+
+      - name: Mirror upstream main
+        run: git push origin upstream/main:main
+
+      - name: Merge upstream into mainline
+        run: |
+          git merge --no-edit upstream/main
+          git push origin HEAD:main-mine
