@@ -1,6 +1,7 @@
 //! Updates the runtime generation while its core is still running.
-//! Only manifest-owned files are deleted, provider caches are invalidated when their URL changes,
-//! and asset metadata avoids hashing large unchanged files. Configuration is committed last.
+//! Manifest-owned assets are refreshed or swept, provider caches are kept so a failed refresh can
+//! fall back to the last successful download, and asset metadata avoids hashing large unchanged
+//! files. Configuration is committed last.
 
 use super::assets::{
     destination_key, invalid_asset, resolve_in_generation, runtime_cleanup_retry_delay, validate_core_path,
@@ -62,7 +63,8 @@ pub(super) struct PlannedCopy {
 /// Planned changes, grouped by their required execution order.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(super) struct StagePlan {
-    /// Stale provider caches removed before reload.
+    /// Files to discard before reload. Provider caches are deliberately never listed here: the
+    /// core replaces them only after a successful download, so a failed refresh keeps the old nodes.
     pub required_deletes: Vec<String>,
     pub copies: Vec<PlannedCopy>,
     /// Unchanged assets, retained for logging.
@@ -112,16 +114,14 @@ pub(super) fn plan_stage(previous: &RuntimeManifest, sources: &[AssetSource], re
     }
 
     for provider in remote {
-        // Missing provenance is treated like a changed URL and cannot reuse the cache.
-        if previous.remote_providers.get(&provider.destination) != Some(&provider.url) {
-            plan.required_deletes.push(provider.destination.clone());
-        }
+        // Keep the previous cache: the core only overwrites it after a successful download, so a
+        // failed refresh still has the last successfully downloaded nodes to fall back to.
         plan.manifest
             .remote_providers
             .insert(provider.destination.clone(), provider.url.clone());
     }
 
-    for recorded in previous.assets.keys().chain(previous.remote_providers.keys()) {
+    for recorded in previous.assets.keys() {
         if !plan.manifest.assets.contains_key(recorded) && !plan.manifest.remote_providers.contains_key(recorded) {
             plan.hygiene_deletes.push(recorded.clone());
         }
