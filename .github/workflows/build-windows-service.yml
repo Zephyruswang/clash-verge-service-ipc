@@ -1,0 +1,51 @@
+name: Build Windows Service
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "build/windows-service"
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/**"
+      - ".github/workflows/build-windows-service.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    name: Build Windows service binaries
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Build service
+        run: cargo build --release --features "standalone client"
+
+      - name: Package service binaries
+        shell: pwsh
+        run: |
+          $asset = "clash-verge-service-ipc-fix-x86_64-pc-windows-msvc"
+          New-Item -ItemType Directory -Path package -Force | Out-Null
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          Copy-Item "target/release/clash-verge-service.exe" package/
+          Copy-Item "target/release/clash-verge-service-install.exe" package/
+          Copy-Item "target/release/clash-verge-service-uninstall.exe" package/
+          Copy-Item LICENSE package/
+          Compress-Archive -Path package/* -DestinationPath "dist/$asset.zip" -Force
+          Get-ChildItem dist
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-service-fix
+          path: dist/*.zip
+          if-no-files-found: error
