@@ -1,0 +1,128 @@
+name: Release Mine
+
+on:
+  schedule:
+    # 30 minutes after Sync Upstream (22:00 UTC), before the app fork's release job (23:00 UTC).
+    # GITHUB_TOKEN pushes from sync do not trigger push workflows, so the schedule is the main path.
+    - cron: "30 22 * * *"
+  push:
+    branches:
+      - main-mine
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-mine
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build Windows service from main-mine
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: main-mine
+          fetch-depth: 0
+
+      - name: Resolve fork version
+        id: target
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          base="$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)"
+          if [[ ! "$base" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid Cargo.toml version: $base" >&2
+            exit 1
+          fi
+          major="${base%%.*}"
+          rest="${base#*.}"
+          minor="${rest%%.*}"
+          patch="${rest#*.}"
+          fork_base="${major}.${minor}.$((patch + 1))"
+          head_sha="$(git rev-parse HEAD)"
+          existing="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName --jq '.[].tagName' || true)"
+          n=1
+          for t in $existing; do
+            if [[ "$t" =~ ^v${fork_base}-mine\.([0-9]+)$ ]]; then
+              idx="${BASH_REMATCH[1]}"
+              # Skip when this commit already has a release tag.
+              obj="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$t" 2>/dev/null || true)"
+              obj_type="$(printf '%s' "$obj" | jq -r '.object.type // empty' 2>/dev/null || true)"
+              sha="$(printf '%s' "$obj" | jq -r '.object.sha // empty' 2>/dev/null || true)"
+              if [ "$obj_type" = "tag" ] && [ -n "$sha" ]; then
+                sha="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$sha" --jq '.object.sha' 2>/dev/null || true)"
+              fi
+              if [ "$sha" = "$head_sha" ]; then
+                echo "Commit $head_sha already released as $t; skipping."
+                echo "skip=true" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              if [ "$idx" -ge "$n" ]; then
+                n=$((idx + 1))
+              fi
+            fi
+          done
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "version=${fork_base}-mine.${n}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=v${fork_base}-mine.${n}" >> "$GITHUB_OUTPUT"
+          echo "Target: upstream service $base -> v${fork_base}-mine.${n} from $head_sha"
+
+      - name: Install Rust toolchain
+        if: steps.target.outputs.skip != 'true'
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.99.1"
+
+      - name: Build patched service
+        if: steps.target.outputs.skip != 'true'
+        shell: bash
+        run: cargo build --release --features "standalone client"
+
+      - name: Package Windows bundle
+        if: steps.target.outputs.skip != 'true'
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ steps.target.outputs.release_tag }}
+        run: |
+          $asset = "clash-verge-service-ipc-$env:RELEASE_TAG-x86_64-pc-windows-msvc"
+          New-Item -ItemType Directory -Path package -Force | Out-Null
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          Copy-Item "target/release/clash-verge-service.exe" package/
+          Copy-Item "target/release/clash-verge-service-install.exe" package/
+          Copy-Item "target/release/clash-verge-service-uninstall.exe" package/
+          Copy-Item LICENSE package/
+          Compress-Archive -Path package/* -DestinationPath "dist/$asset.zip" -Force
+
+      - name: Generate SHA256SUMS
+        if: steps.target.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum *.zip > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create prerelease
+        if: steps.target.outputs.skip != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.target.outputs.release_tag }}
+          VERSION: ${{ steps.target.outputs.version }}
+          BASE: ${{ steps.target.outputs.base }}
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_TAG" dist/*.zip dist/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "clash-verge-service-ipc $VERSION" \
+            --prerelease \
+            --notes "Patched Windows x64 build of upstream $BASE source at commit $GITHUB_SHA (branch main-mine). Includes the provider-cache fix."
+          echo "Release: https://github.com/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
