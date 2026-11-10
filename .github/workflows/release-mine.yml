@@ -46,6 +46,16 @@ jobs:
           patch="${rest#*.}"
           fork_base="${major}.${minor}.$((patch + 1))"
           head_sha="$(git rev-parse HEAD)"
+          # Mirror the app fork: build-config-only commits do not produce a release.
+          prev_tag="$(git describe --tags --abbrev=0 --match 'v[0-9]*-mine.*' HEAD 2>/dev/null || true)"
+          if [ -n "$prev_tag" ]; then
+            changed="$(git diff --name-only "$prev_tag..HEAD" || true)"
+            if [ -z "$changed" ] || ! printf '%s\n' "$changed" | grep -qvE '^\.github/'; then
+              echo "No source changes since $prev_tag (build config only); skipping release."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
           existing="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName --jq '.[].tagName' || true)"
           n=1
           for t in $existing; do
@@ -195,5 +205,6 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "clash-verge-service-ipc $VERSION" \
+            --prerelease \
             --notes-file "$RUNNER_TEMP/notes.md"
           echo "Release: https://github.com/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
