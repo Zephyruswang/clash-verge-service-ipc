@@ -119,10 +119,29 @@ jobs:
           BASE: ${{ steps.target.outputs.base }}
         run: |
           set -euo pipefail
+          asset="$(basename "$(ls dist/*.zip | head -1)")"
+          zip_sha="$(awk 'NR==1 {print $1}' dist/SHA256SUMS.txt)"
+          cat > "$RUNNER_TEMP/notes.md" <<EOF
+          Patched Windows x64 build of the fork's \`main-mine\` branch.
+
+          - **Base:** upstream clash-verge-service-ipc $BASE
+          - **Patch:** in service mode, a failed remote proxy-provider refresh keeps the last successfully downloaded cache instead of deleting it first and leaving zero nodes
+          - **Commit:** \`$GITHUB_SHA\`
+          - **Version rule:** upstream patch+1 + \`-mine.N\` (upstream $BASE -> $VERSION)
+
+          **Assets**
+
+          - \`$asset\` - clash-verge-service.exe, clash-verge-service-install.exe, clash-verge-service-uninstall.exe, LICENSE
+          - \`SHA256SUMS.txt\`
+
+          ZIP SHA256: \`$zip_sha\`
+
+          The app fork's Windows release workflow consumes this build when the release tag's commit equals \`main-mine\` HEAD; otherwise it falls back to building the service from source.
+          EOF
           gh release create "$RELEASE_TAG" dist/*.zip dist/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "clash-verge-service-ipc $VERSION" \
             --prerelease \
-            --notes "Patched Windows x64 build of upstream $BASE source at commit $GITHUB_SHA (branch main-mine). Includes the provider-cache fix."
+            --notes-file "$RUNNER_TEMP/notes.md"
           echo "Release: https://github.com/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
