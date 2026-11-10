@@ -138,6 +138,44 @@ jobs:
 
           The app fork's Windows release workflow consumes this build when the release tag's commit equals \`main-mine\` HEAD; otherwise it falls back to building the service from source.
           EOF
+          prev_tag="$(git describe --tags --abbrev=0 --match 'v[0-9]*-mine.*' HEAD 2>/dev/null || true)"
+          commit_dir="$RUNNER_TEMP/fork-commits"
+          mkdir -p "$commit_dir"
+          if [ -n "$prev_tag" ]; then
+            git log --no-merges --pretty=tformat:'%h%x09%s' "$prev_tag..HEAD" | while IFS=$'\t' read -r csha csubject; do
+              [ -z "$csha" ] && continue
+              case "$csubject" in
+                "ci: sync"*) continue ;;
+                fix*) type=fix ;;
+                feat*) type=feat ;;
+                ci*) type=ci ;;
+                docs*) type=docs ;;
+                chore*) type=chore ;;
+                refactor*) type=refactor ;;
+                perf*) type=perf ;;
+                test*) type=test ;;
+                build*) type=build ;;
+                *) type=other ;;
+              esac
+              printf -- '- `%s` %s\n' "$csha" "$csubject" >> "$commit_dir/$type"
+            done
+            if ls "$commit_dir"/* >/dev/null 2>&1; then
+              {
+                echo ""
+                echo "**Fork commits since $prev_tag**"
+                echo ""
+                for pair in "feat:Features" "fix:Fixes" "refactor:Refactors" "perf:Performance" "build:Build" "ci:CI" "docs:Docs" "test:Tests" "chore:Chores" "other:Other"; do
+                  f="$commit_dir/${pair%%:*}"
+                  if [ -s "$f" ]; then
+                    echo "**${pair#*:}**"
+                    echo ""
+                    cat "$f"
+                    echo ""
+                  fi
+                done
+              } >> "$RUNNER_TEMP/notes.md"
+            fi
+          fi
           upstream_notes="$(gh api "repos/clash-verge-rev/clash-verge-service-ipc/releases/tags/v$BASE" --jq '.body // empty' 2>/dev/null || true)"
           {
             echo ""
