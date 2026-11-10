@@ -138,6 +138,21 @@ jobs:
 
           The app fork's Windows release workflow consumes this build when the release tag's commit equals \`main-mine\` HEAD; otherwise it falls back to building the service from source.
           EOF
+          upstream_notes="$(gh api "repos/clash-verge-rev/clash-verge-service-ipc/releases/tags/v$BASE" --jq '.body // empty' 2>/dev/null || true)"
+          {
+            echo ""
+            echo "**Upstream release notes (v$BASE)**"
+            echo ""
+            if [ -n "$upstream_notes" ]; then
+              echo "<details><summary>Expand</summary>"
+              echo ""
+              printf '%s\n' "$upstream_notes"
+              echo ""
+              echo "</details>"
+            else
+              echo "_Not available (upstream v$BASE has no published release yet)._"
+            fi
+          } >> "$RUNNER_TEMP/notes.md"
           gh release create "$RELEASE_TAG" dist/*.zip dist/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
