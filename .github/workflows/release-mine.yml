@@ -2,9 +2,9 @@ name: Release Mine
 
 on:
   schedule:
-    # 30 minutes after Sync Upstream (22:00 UTC), before the app fork's release job (23:00 UTC).
+    # Offset from the top of the hour (and after Sync Upstream at 22:17) to reduce scheduler delays.
     # GITHUB_TOKEN pushes from sync do not trigger push workflows, so the schedule is the main path.
-    - cron: "30 22 * * *"
+    - cron: "47 22 * * *"
   push:
     branches:
       - main-mine
