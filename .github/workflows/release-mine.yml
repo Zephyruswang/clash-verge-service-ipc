@@ -192,6 +192,8 @@ jobs:
             echo "**Upstream release notes (v$BASE)**"
             echo ""
             if [ -n "$upstream_notes" ]; then
+              echo "> The links below point to the original repository's upstream builds and do not include this fork's provider-cache patch. The patched build is attached to this release."
+              echo ""
               echo "<details><summary>Expand</summary>"
               echo ""
               printf '%s\n' "$upstream_notes"
