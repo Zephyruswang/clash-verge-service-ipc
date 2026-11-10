@@ -195,6 +195,5 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "clash-verge-service-ipc $VERSION" \
-            --prerelease \
             --notes-file "$RUNNER_TEMP/notes.md"
           echo "Release: https://github.com/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
