@@ -119,7 +119,7 @@ jobs:
           sha256sum *.zip > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
-      - name: Create prerelease
+      - name: Create release
         if: steps.target.outputs.skip != 'true'
         shell: bash
         env:
@@ -201,10 +201,17 @@ jobs:
               echo "_Not available (upstream v$BASE has no published release yet)._"
             fi
           } >> "$RUNNER_TEMP/notes.md"
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            # Manual runs are test builds; keep them as prereleases.
+            release_kind="--prerelease"
+          else
+            # Automated runs (sync schedule or real pushes) publish formal releases.
+            release_kind="--latest"
+          fi
           gh release create "$RELEASE_TAG" dist/*.zip dist/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "clash-verge-service-ipc $VERSION" \
-            --prerelease \
+            $release_kind \
             --notes-file "$RUNNER_TEMP/notes.md"
           echo "Release: https://github.com/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
